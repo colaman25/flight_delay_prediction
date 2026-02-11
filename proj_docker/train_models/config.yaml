@@ -1,0 +1,23 @@
+training_config:
+  data_source: "iceberg"
+  data_input_path: "local.data.combined_data"
+  sample_rate: 1.0
+  test_split: 0.2
+  model_output_path: "s3a://flight-delay-predictions/models"
+
+feature_config:
+  categorical_cols:
+    - "operator"
+    - "dest_airport_icao"
+  numerical_cols:
+    - "aircraft_airport_distance_km"
+    - "seconds_to_scheduled_out"
+    - "velocity"
+    - "vertical_rate"
+    - "on_ground_int"
+    - "true_track"
+    - "aircraft_to_airport_heading"
+  label_col: "departure_delay"
+
+model_config:
+  decision_tree_max_bins: 360

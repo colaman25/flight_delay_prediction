@@ -1,0 +1,148 @@
+services:
+  kafka:
+    image: apache/kafka-native:4.1.1
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+
+      KAFKA_LISTENERS: >
+        PLAINTEXT://0.0.0.0:9092,
+        CONTROLLER://0.0.0.0:9093
+
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >
+        PLAINTEXT:PLAINTEXT,
+        CONTROLLER:PLAINTEXT
+
+    networks:
+      - flight_delay_net
+    restart: unless-stopped
+
+  topic-init:
+    image: kafka_topic_init:latest
+    build: ./kafka_topic_init
+    depends_on:
+      - kafka
+    networks:
+      - flight_delay_net
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web UI
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    networks:
+      - flight_delay_net
+    restart: unless-stopped
+
+  kafka-to-iceberg:
+    image: kafka_to_iceberg:latest
+    build: ./kafka_to_iceberg
+    depends_on:
+      - kafka
+      - minio
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    networks:
+      - flight_delay_net
+
+  aggregate-data:
+    image: aggregate_data:latest
+    build: ./aggregate_data
+    depends_on:
+      - minio
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    networks:
+      - flight_delay_net
+
+  predict-to-iceberg:
+    image: predict_to_iceberg:latest
+    build: ./predict_to_iceberg
+    depends_on:
+      - minio
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    networks:
+      - flight_delay_net
+
+  airflow-db:
+    image: postgres:15
+    container_name: airflow-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    networks:
+      - flight_delay_net
+
+  airflow-webserver:
+    image: airflow:custom
+    build: ./airflow
+    container_name: airflow-webserver
+    depends_on:
+      - airflow-db
+    user: "0:0"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
+    networks:
+      - flight_delay_net
+    ports:
+      - "8080:8080"
+    command: webserver
+
+  airflow-scheduler:
+    image: airflow:custom
+    build: ./airflow
+    container_name: airflow-scheduler
+    depends_on:
+      - airflow-webserver
+    user: "0:0"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
+    networks:
+      - flight_delay_net
+    command: scheduler
+
+volumes:
+  minio-data:
+  airflow-db-data:
+
+networks:
+  flight_delay_net:
+    name: flight_delay_net

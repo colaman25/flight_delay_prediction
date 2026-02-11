@@ -1,0 +1,4 @@
+*.ipynb
+*.csv
+*.json
+proj_docker/.env
