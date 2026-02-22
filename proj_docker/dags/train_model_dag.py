@@ -30,6 +30,9 @@ with DAG(
         environment={
             "MINIO_ACCESS_KEY": "{{ var.value.MINIO_ACCESS_KEY }}",
             "MINIO_SECRET_KEY": "{{ var.value.MINIO_SECRET_KEY }}",
+            "AWS_ACCESS_KEY_ID": "{{ var.value.AWS_ACCESS_KEY_ID }}",
+            "AWS_SECRET_ACCESS_KEY": "{{ var.value.AWS_SECRET_ACCESS_KEY }}",
+            "AWS_DEFAULT_REGION": "{{ var.value.AWS_DEFAULT_REGION }}",
         },
     )
 
