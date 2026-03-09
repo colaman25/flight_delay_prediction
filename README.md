@@ -1,12 +1,57 @@
-# Flight Price Prediction
+# Live Flight Delay Prediction
 
-Showcase Pyspark project that process 20Gb of flight price data and uses a ML model to train, test and predict flight prices.
+Use live flight schedule and live aircraft data to generate running departure delay predictions up to actual departure time.
 
-## Source Data
-Download the source data or use it as sample for data schema:
-https://www.kaggle.com/datasets/dilwong/flightprices
+## Live Data Sources
+Flight Schedule Data: \
+Flight Aware Aero API \
+https://www.flightaware.com/commercial/aeroapi/ \
+####
+Aircraft Live Data: \
+OpenSky API \
+https://openskynetwork.github.io/opensky-api/
+
 
 ## Usage
-The scripts utilizes PySpark 2.3.1 so make sure you have it installed in your enviroment. Other dependencies please see requirements.txt
+Install Docker:\
+https://www.docker.com/get-started/
 
-spark-submit main.py [train/predict] --input "[path_to_your_training_testing_data_file]" --model_path "[path_to_model_directory]" --output["path_to_save_prediction_results"]
+Project folder: proj_docker
+####
+In bash, run: \
+docker compose up --build -d
+####
+This will spin up all the necessary containers:
+- Kafka Instance
+- Kafka to Iceberg
+- Data Aggregator and Feature Engineer
+- Airflow
+- Live Predictions
+
+Airflow: localhost:8080 to orchestrate:
+- Live Schedule Reader
+- Live Flight Reader
+- Model Training
+
+## Required Credentials
+####proj_docker/.env
+FLIGHTAWARE_API \
+OPENSKY_CLIENT_ID \
+OPENSKY_CLIENT_SECRET \
+AWS_ACCESS_KEY_ID \
+AWS_SECRET_ACCESS_KEY \
+AIRFLOW__WEBSERVER__SECRET_KEY
+###
+####Airflow
+FLIGHTAWARE_API \
+OPENSKY_CLIENT_ID \
+OPENSKY_CLIENT_SECRET \
+AWS_ACCESS_KEY_ID \
+AWS_SECRET_ACCESS_KEY
+###
+####S3 Bucket IAM Roles Needed:
+https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/AuroraMySQL.Integrating.Authorizing.IAM.S3CreatePolicy.html
+
+##Pre-Built Models
+- Linear Regression
+- Random Forest

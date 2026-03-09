@@ -7,6 +7,7 @@ from pyspark.ml import Pipeline
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.regression import DecisionTreeRegressor
 from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.sql.window import Window
 
 WAREHOUSE_PATH = "s3a://flight-delay-predictions/iceberg"
 
@@ -44,6 +45,12 @@ def load_config(config_path='config.yaml'):
     return config
 
 
+def get_latest_flight_loc(df):
+    window_spec = (Window.partitionBy(col1, col2, col3).orderBy(F.col(col4).desc()))
+    result_df = (df.withColumn("_rn", F.row_number().over(window_spec)).filter(F.col("_rn") == 1).drop("_rn"))
+    return result_df
+
+
 def train_model(config_path='config.yaml'):
     # Load configuration
     config = load_config(config_path)
@@ -56,9 +63,6 @@ def train_model(config_path='config.yaml'):
 
     # Extract a smaller dataset
     small_df1 = df1.sample(True, training_cfg['sample_rate'], seed=42)
-
-    # Clean & Transform Data
-    # small_df1_cleaned = clean_transform_data(small_df1)
     small_df1_cleaned = small_df1
 
     # Build, Test & Evaluate Model

@@ -3,6 +3,8 @@ from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import DoubleType
 from pyspark.sql import Column
+from pyspark.sql.window import Window
+import holidays
 
 # =========================================================
 # Spark + Iceberg setup (same as your batch job)
@@ -76,6 +78,14 @@ def heading_deg(lon1: str, lat1: str, lon2: str, lat2: str) -> Column:
         ) % 360
     )
 
+# Holiday Table
+uk = holidays.country_holidays("GB", years=[2026, 2027, 2028])
+holiday_df = spark.createDataFrame(
+    [(str(d),) for d in uk.keys()],
+    ["holiday_date"]
+).withColumn("holiday_date", F.to_date("holiday_date"))
+
+
 # =========================================================
 # Static reference data (loaded once)
 # =========================================================
@@ -125,6 +135,38 @@ for c in df_conv.columns:
     df_conv = df_conv.withColumnRenamed(c, c.strip("'"))
 
 df_conv = df_conv.select("icao24_cln", "registration")
+
+
+# Operator Average Delay Update
+spark.sql("""
+CREATE TABLE IF NOT EXISTS local.ref.operator_avg_delay (
+    operator STRING,
+    operator_avg_departure_delay DOUBLE
+)
+USING iceberg
+""")
+
+operator_avg = (
+    spark.read.format("iceberg")
+    .load("local.data.combined_data")
+    .groupBy("operator")
+    .agg(F.avg("departure_delay").alias("operator_avg_departure_delay"))
+)
+
+operator_avg.write.format("iceberg").mode("overwrite").save("local.ref.operator_avg_delay")
+
+df_operator_avg = (
+    spark.read
+    .format("iceberg")
+    .load("local.ref.operator_avg_delay")
+)
+
+global_avg_delay = (
+    df_operator_avg
+    .select(F.avg("operator_avg_departure_delay"))
+    .first()[0]
+)
+
 
 # =========================================================
 # Streaming sources (Iceberg)
@@ -205,7 +247,7 @@ df_joined = (
 )
 
 # =========================================================
-# Feature engineering (same as batch)
+# Feature engineering
 # =========================================================
 
 df_features = (
@@ -241,7 +283,51 @@ df_features = (
         "aircraft_to_airport_heading",
         heading_deg('longitude', 'latitude', 'airport_long', 'airport_lat')
     )
+    .withColumn(
+        "scheduled_out_hour_of_day",
+        F.hour("scheduled_out")
+    )
+    .withColumn(
+        "scheduled_out_day_of_week",
+        F.dayofweek("scheduled_out")
+    )
+    .withColumn(
+        "scheduled_out_month_of_year",
+        F.month("scheduled_out")
+    )
 )
+
+df_features = (
+    df_features
+    .withColumn("scheduled_date", F.to_date("scheduled_out"))
+    .join(
+        F.broadcast(holiday_df),
+        F.col("scheduled_date") == holiday_df.holiday_date,
+        "left"
+    )
+    .withColumn(
+        "is_holiday",
+        F.when(F.col("holiday_date").isNotNull(), F.lit(1)).otherwise(F.lit(0))
+    )
+    .drop("holiday_date", "scheduled_date")
+)
+
+df_features = (
+    df_features
+    .join(
+        F.broadcast(df_operator_avg),
+        "operator",
+        "left"
+    )
+    .withColumn(
+        "operator_avg_departure_delay",
+        F.coalesce(
+            F.col("operator_avg_departure_delay"),
+            F.lit(global_avg_delay)
+        )
+    )
+)
+
 
 # =========================================================
 # Filter training set (same logic as batch)
@@ -305,7 +391,12 @@ spark.sql("""
     on_ground_int INT,
     diverted_int INT,
     cancelled_int INT,
-    aircraft_to_airport_heading DOUBLE
+    aircraft_to_airport_heading DOUBLE,
+    scheduled_out_hour_of_day INT,
+    scheduled_out_day_of_week INT,
+    scheduled_out_month_of_year INT,
+    operator_avg_departure_delay DOUBLE,
+    is_holiday INT
     )
     
     USING iceberg
@@ -360,6 +451,11 @@ OUTPUT_COLUMNS = [
     "diverted_int",
     "cancelled_int",
     "aircraft_to_airport_heading",
+    "scheduled_out_hour_of_day",
+    "scheduled_out_day_of_week",
+    "scheduled_out_month_of_year",
+    "operator_avg_departure_delay",
+    "is_holiday"
 ]
 
 df_trainset = df_trainset.select(*OUTPUT_COLUMNS)
