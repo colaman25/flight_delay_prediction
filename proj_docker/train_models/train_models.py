@@ -7,6 +7,8 @@ from pyspark.ml import Pipeline
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.regression import DecisionTreeRegressor
 from pyspark.ml.evaluation import RegressionEvaluator
+from xgboost.spark import SparkXGBRegressor
+from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
 WAREHOUSE_PATH = "s3a://flight-delay-predictions/iceberg"
@@ -63,7 +65,22 @@ def train_model(config_path='config.yaml'):
 
     # Extract a smaller dataset
     small_df1 = df1.sample(True, training_cfg['sample_rate'], seed=42)
-    small_df1_cleaned = small_df1
+
+    # Weight Adjustment for multiple entries per flight
+    small_df1 = small_df1.withColumn(
+        "flight_id",
+        F.concat_ws(
+            "_",
+            F.col("ident"),
+            F.col("origin_airport_icao"),
+            F.col("scheduled_out").cast("string")
+        )
+    )
+
+    small_df1 = small_df1.withColumn(
+        "sample_weight",
+        1.0 / F.count("*").over(Window.partitionBy("flight_id"))
+    )
 
     # Build, Test & Evaluate Model
     # Define categorical and numeric columns
@@ -78,7 +95,7 @@ def train_model(config_path='config.yaml'):
     ).setStrategy("mean")
 
     # Train/test split
-    train_df, test_df = small_df1_cleaned.randomSplit([1 - training_cfg['test_split'], training_cfg['test_split']], seed=45)
+    train_df, test_df = small_df1.randomSplit([1 - training_cfg['test_split'], training_cfg['test_split']], seed=45)
 
 
     # Train Linear Regression model
@@ -91,7 +108,7 @@ def train_model(config_path='config.yaml'):
     assembler = VectorAssembler(inputCols=assembler_inputs, outputCol="features")
 
     # Step 3: Train Model
-    lr = LinearRegression(featuresCol="features", labelCol=label_col)
+    lr = LinearRegression(featuresCol="features", labelCol=label_col, weightCol="sample_weight")
 
     # Step 4: Pipeline
     pipeline = Pipeline(stages=indexers + encoders + [imputer] + [assembler] + [lr])
@@ -123,7 +140,7 @@ def train_model(config_path='config.yaml'):
     assembler = VectorAssembler(inputCols=assembler_inputs, outputCol="features")
 
     # Step 3: Train Model
-    dt = DecisionTreeRegressor(featuresCol="features", labelCol=label_col, maxBins=model_cfg['decision_tree_max_bins'])
+    dt = DecisionTreeRegressor(featuresCol="features", labelCol=label_col, weightCol="sample_weight", maxBins=model_cfg['decision_tree_max_bins'])
 
     # Step 3: Pipeline
     pipeline = Pipeline(stages=indexers + [imputer] + [assembler] + [dt])
@@ -144,6 +161,54 @@ def train_model(config_path='config.yaml'):
     metrics_df_dt = spark.createDataFrame([Row(**metrics_dt)])
     metrics_output_path_dt = f"{training_cfg['model_output_path']}/metrics_DecisionTreeRegression_{timestamp}.json"
     metrics_df_dt.coalesce(1).write.mode("overwrite").json(metrics_output_path_dt)
+
+
+    # XGBoost Regression
+    # Step 1: Index categorical columns
+    indexers = [StringIndexer(inputCol=col, outputCol=f"{col}_idx", handleInvalid="keep") for col in categorical_cols]
+
+    # Step 2: Assemble features
+    assembler_inputs = [f"{col}_idx" for col in categorical_cols] + numerical_cols
+    assembler = VectorAssembler(inputCols=assembler_inputs, outputCol="features")
+
+    # Step 3: Train XGBoost model
+    xgb = SparkXGBRegressor(
+        features_col="features",
+        label_col=label_col,
+        weight_col="sample_weight",
+        num_workers=2,
+        max_depth=model_cfg.get("xgboost_max_depth", 6),
+        eta=model_cfg.get("xgboost_eta", 0.3),
+        objective="reg:squarederror"
+    )
+
+    # Step 4: Pipeline
+    pipeline = Pipeline(stages=indexers + [imputer] + [assembler] + [xgb])
+    xgb_model = pipeline.fit(train_df)
+
+    # Step 5: Save Model
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    save_path = f"{training_cfg['model_output_path']}/xgboost_regression_{timestamp}"
+    xgb_model.write().overwrite().save(save_path)
+
+    # Step 6: Evaluate
+    evaluator = RegressionEvaluator(labelCol=label_col, predictionCol="prediction")
+
+    predictions_xgb = xgb_model.transform(test_df)
+    r2_xgb = evaluator.evaluate(predictions_xgb, {evaluator.metricName: "r2"})
+    rmse_xgb = evaluator.evaluate(predictions_xgb, {evaluator.metricName: "rmse"})
+
+    metrics_xgb = {
+        "Model": "XGBoostRegression",
+        "R2": r2_xgb,
+        "RMSE": rmse_xgb,
+        "Timestamp": timestamp
+    }
+
+    metrics_df_xgb = spark.createDataFrame([Row(**metrics_xgb)])
+
+    metrics_output_path_xgb = f"{training_cfg['model_output_path']}/metrics_XGBoostRegression_{timestamp}.json"
+    metrics_df_xgb.coalesce(1).write.mode("overwrite").json(metrics_output_path_xgb)
 
 
 train_model('config.yaml')

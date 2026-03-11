@@ -330,13 +330,14 @@ df_features = (
 
 
 # =========================================================
-# Filter training set (same logic as batch)
+# Filter training set
 # =========================================================
 
 df_trainset = (
     df_features
     .filter(F.col("time_position_iso") < F.col("actual_off"))
 )
+
 
 # =========================================================
 # Sink: Iceberg (recommended)

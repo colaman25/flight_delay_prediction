@@ -9,6 +9,10 @@ feature_config:
   categorical_cols:
     - "operator"
     - "dest_airport_icao"
+    - "scheduled_out_hour_of_day"
+    - "scheduled_out_day_of_week"
+    - "scheduled_out_month_of_year"
+    - "is_holiday"
   numerical_cols:
     - "aircraft_airport_distance_km"
     - "seconds_to_scheduled_out"
@@ -17,7 +21,10 @@ feature_config:
     - "on_ground_int"
     - "true_track"
     - "aircraft_to_airport_heading"
+    - "operator_avg_departure_delay"
   label_col: "departure_delay"
 
 model_config:
   decision_tree_max_bins: 360
+  xgboost_max_depth: 6
+  xgboost_eta: 0.3

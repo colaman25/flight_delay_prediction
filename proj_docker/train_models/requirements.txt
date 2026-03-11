@@ -1,2 +1,5 @@
 PyYAML
 numpy
+xgboost
+pandas
+scikit-learn

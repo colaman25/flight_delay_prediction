@@ -16,7 +16,7 @@ spark = (
     .config("spark.sql.catalog.local.warehouse", WAREHOUSE_PATH)
     .config("spark.sql.defaultCatalog", "local")
     #.config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
-    .config("spark.hadoop.fs.s3a.endpoint", "s3.amazonaws.com")
+    .config("spark.hadoop.fs.s3a.endpoint.region", "eu-west-2")
     .config("spark.hadoop.fs.s3a.access.key", os.getenv("MINIO_ACCESS_KEY"))
     .config("spark.hadoop.fs.s3a.secret.key", os.getenv("MINIO_SECRET_KEY"))
     .config("spark.hadoop.fs.s3a.access.key", os.getenv("AWS_ACCESS_KEY_ID"))
@@ -108,6 +108,11 @@ def run_prediction_s(config_path='config.yaml'):
         diverted_int INT,
         cancelled_int INT,
         aircraft_to_airport_heading DOUBLE,
+        scheduled_out_hour_of_day INT,
+        scheduled_out_day_of_week INT,
+        scheduled_out_month_of_year INT,
+        operator_avg_departure_delay DOUBLE,
+        is_holiday INT,
         prediction DOUBLE
         )
 
