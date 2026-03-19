@@ -47,12 +47,6 @@ def load_config(config_path='config.yaml'):
     return config
 
 
-def get_latest_flight_loc(df):
-    window_spec = (Window.partitionBy(col1, col2, col3).orderBy(F.col(col4).desc()))
-    result_df = (df.withColumn("_rn", F.row_number().over(window_spec)).filter(F.col("_rn") == 1).drop("_rn"))
-    return result_df
-
-
 def train_model(config_path='config.yaml'):
     # Load configuration
     config = load_config(config_path)

@@ -1,4 +1,4 @@
 predict_config:
   data_input_path: "local.data.combined_data"
-  model_input_path: "s3a://flight-delay-predictions/models/decision_tree_regression_2026-03-10_23-50-28"
+  model_input_path: "s3a://flight-delay-predictions/models/decision_tree_regression_2026-03-11_22-17-03"
   result_output_path: "local.data.prediction_data"

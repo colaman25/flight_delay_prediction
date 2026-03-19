@@ -146,6 +146,17 @@ services:
       - flight_delay_net
     command: scheduler
 
+  api:
+    image: api:latest
+    build: ./api
+    container_name: prediction_api
+    ports:
+      - "8000:8000"
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    restart: unless-stopped
+
 volumes:
   minio-data:
   airflow-db-data:
