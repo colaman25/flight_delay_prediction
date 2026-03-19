@@ -1,0 +1,13 @@
+----------------------------------------------------------------
+Wed Mar 11 22:49:01 GMT 2026:
+Booting Derby version The Apache Software Foundation - Apache Derby - 10.14.2.0 - (1828579): instance a816c00e-019c-df16-d3cd-000002dd9248 
+on database directory /mnt/c/Projects/flight_analysis/proj_docker/metastore_db with class loader jdk.internal.loader.ClassLoaders$AppClassLoader@5ffd2b27 
+Loaded from file:/opt/spark/jars/derby-10.14.2.0.jar
+java.vendor=Ubuntu
+java.runtime.version=17.0.17+10-Ubuntu-122.04
+user.dir=/mnt/c/Projects/flight_analysis/proj_docker
+os.name=Linux
+os.arch=amd64
+os.version=5.15.153.1-microsoft-standard-WSL2
+derby.system.home=null
+Database Class Loader started - derby.database.classpath=''

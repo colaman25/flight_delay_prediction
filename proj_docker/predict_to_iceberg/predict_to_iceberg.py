@@ -136,7 +136,7 @@ def run_prediction_s(config_path='config.yaml'):
             .format("iceberg")
             .outputMode("append")
             .option("checkpointLocation",
-                    "checkpoints/data_prediction_data")
+                    "s3a://flight-delay-predictions/checkpoints/data_prediction_data")
             .toTable(predict_cfg['result_output_path'])
     )
 
@@ -146,7 +146,7 @@ def run_prediction_s(config_path='config.yaml'):
             .format("kafka")
             .option("kafka.bootstrap.servers", "kafka:9092")
             .option("topic", "prediction-results")
-            .option("checkpointLocation", "checkpoints/data_prediction_kafka")
+            .option("checkpointLocation", "s3a://flight-delay-predictions/checkpoints/data_prediction_kafka")
             .outputMode("append")
             .start()
     )
