@@ -2,3 +2,5 @@
 *.csv
 *.json
 proj_docker/.env
+proj_docker/metastore_db
+proj_docker/*.log
