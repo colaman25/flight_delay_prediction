@@ -1,53 +1,46 @@
-import os
-from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
-from pyspark.sql.types import DoubleType
+import sys
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
 from pyspark.sql import Column
+from pyspark.sql.types import DoubleType
 from pyspark.sql.window import Window
+import pyspark.sql.functions as F
+from awsglue.context import GlueContext
+from awsglue.job import Job
 import holidays
 
 # =========================================================
-# Spark + Iceberg setup (same as your batch job)
+# Glue job bootstrap
 # =========================================================
+# Iceberg/Glue-Catalog configuration (spark.sql.extensions,
+# spark.sql.catalog.local.*, --datalake-formats) is set via job
+# parameters in the Glue job definition (see infra/glue_jobs.tf),
+# not programmatically here — those settings must exist before
+# this SparkContext is created, which Glue does internally before
+# any of this script's code runs.
+#
+# The `holidays` package used below isn't part of Glue's default
+# Python environment — it's added via --additional-python-modules
+# in the same job definition.
 
-WAREHOUSE_PATH = "s3a://flight-delay-predictions/iceberg"
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME',
+    'warehouse_path',
+    'airport_longlat_path',
+    'aircraft_database_path',
+])
 
-STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "aws").lower()
-
-spark_builder = (
-    SparkSession.builder
-    .appName("IcebergKafkaStreaming")
-    .master("local[*]")
-    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-    .config("spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog")
-    .config("spark.sql.catalog.local.type", "hadoop")
-    .config("spark.sql.catalog.local.warehouse", WAREHOUSE_PATH)
-    .config("spark.sql.defaultCatalog", "local")
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-)
-
-if STORAGE_BACKEND == "minio":
-    spark_builder = (
-        spark_builder
-        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
-        .config("spark.hadoop.fs.s3a.access.key", os.getenv("MINIO_ACCESS_KEY"))
-        .config("spark.hadoop.fs.s3a.secret.key", os.getenv("MINIO_SECRET_KEY"))
-        .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-    )
-else:
-    spark_builder = (
-        spark_builder
-        .config("spark.hadoop.fs.s3a.endpoint.region", os.getenv("AWS_DEFAULT_REGION", "eu-west-2"))
-        .config("spark.hadoop.fs.s3a.access.key", os.getenv("AWS_ACCESS_KEY_ID"))
-        .config("spark.hadoop.fs.s3a.secret.key", os.getenv("AWS_SECRET_ACCESS_KEY"))
-        .config("spark.hadoop.fs.s3a.path.style.access", "false")
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "true")
-    )
-
-spark = spark_builder.getOrCreate()
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
 
 spark.sparkContext.setLogLevel("WARN")
+
+WAREHOUSE_PATH = args['warehouse_path']
+AIRPORT_LONGLAT_PATH = args['airport_longlat_path']
+AIRCRAFT_DATABASE_PATH = args['aircraft_database_path']
 
 # =========================================================
 # Constants & helpers
@@ -112,7 +105,7 @@ spark.sql("""
     USING iceberg
 """)
 
-df_airport = spark.read.csv('airport_longlat.csv', header=True)
+df_airport = spark.read.csv(AIRPORT_LONGLAT_PATH, header=True)
 df_airport = df_airport.select(
     F.col('ident'),
     F.col('latitude_deg'),
@@ -134,7 +127,7 @@ df_airport = (
 
 # Aircraft registration ↔ ICAO24 mapping
 df_conv = spark.read.csv(
-    "aircraft-database-complete-2025-08.csv", header=True
+    AIRCRAFT_DATABASE_PATH, header=True
 )
 
 df_conv = (
@@ -230,6 +223,7 @@ spark.sql("""
     operator_avg_departure_delay DOUBLE,
     is_holiday INT
     )
+
     USING iceberg
     """)
 
@@ -580,8 +574,12 @@ query = (
     df_trainset.writeStream
     .format("iceberg")
     .outputMode("append")
-    .option("checkpointLocation", "s3a://flight-delay-predictions/checkpoints/data_combined_data")
+    .option("checkpointLocation", f"{WAREHOUSE_PATH}/checkpoints/data_combined_data")
     .toTable("local.data.combined_data")
 )
 
 query.awaitTermination()
+
+# Only reached if the streaming query above terminates (error or
+# explicit stop) — this is a continuous streaming job, not a batch one.
+job.commit()

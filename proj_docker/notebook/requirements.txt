@@ -1,0 +1,5 @@
+jupyterlab
+duckdb
+pandas
+pyarrow
+boto3

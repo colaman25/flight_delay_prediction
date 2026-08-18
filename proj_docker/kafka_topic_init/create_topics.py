@@ -10,7 +10,8 @@ admin = AdminClient({
 
 topics = [
     NewTopic("flight-data", 1, 1),
-    NewTopic("schedule-data", 1, 1),
+    NewTopic("departure-schedule-data", 1, 1),
+    NewTopic("arrival-schedule-data", 1, 1),
     NewTopic("prediction-results", 1, 1),
 ]
 

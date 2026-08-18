@@ -27,6 +27,7 @@ with DAG(
         auto_remove=True,
         network_mode=NETWORK,
         docker_url='unix://var/run/docker.sock',
+        do_xcom_push=False,
         environment={
             "KAFKA_BROKER": "kafka:9092",
             "OPENSKY_CLIENT_ID": "{{ var.value.OPENSKY_CLIENT_ID }}",
@@ -41,6 +42,7 @@ with DAG(
         auto_remove=True,
         network_mode=NETWORK,
         docker_url='unix://var/run/docker.sock',
+        do_xcom_push=False,
         environment={
             "KAFKA_BROKER": "kafka:9092",
             "FLIGHTAWARE_API": "{{ var.value.FLIGHTAWARE_API }}",

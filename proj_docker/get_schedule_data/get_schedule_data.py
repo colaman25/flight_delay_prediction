@@ -4,7 +4,7 @@ import requests
 import yaml
 from dotenv import load_dotenv
 from kafka import KafkaProducer
-from kafka.errors import NoBrokersAvailable
+from kafka.errors import MetadataEmptyBrokerList
 import os
 
 # --- Load environment variables ---
@@ -12,7 +12,8 @@ load_dotenv()
 
 API_KEY = os.getenv("FLIGHTAWARE_API")
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "schedule-data")
+DEPARTURE_KAFKA_TOPIC = os.getenv("DEPARTURE_KAFKA_TOPIC", "departure-schedule-data")
+ARRIVAL_KAFKA_TOPIC = os.getenv("ARRIVAL_KAFKA_TOPIC", "arrival-schedule-data")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "1800"))  # seconds
 
 headers = {
@@ -26,15 +27,23 @@ def load_config(config_path='config.yaml'):
         config = yaml.safe_load(file)
     return config
 
-def fetch_data_from_api(part_url):
+def fetch_data_from_api(part_url, max_retries=5, default_backoff=10):
     base_url = 'https://aeroapi.flightaware.com/aeroapi'
-    try:
-        response = requests.get(base_url+part_url, headers=headers, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"[ERROR] API request failed: {e}")
-        return None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.get(base_url+part_url, headers=headers, timeout=10)
+            if response.status_code == 429:
+                wait = int(response.headers.get("Retry-After", default_backoff))
+                print(f"[WARN] Rate limited (429), waiting {wait}s before retry ({attempt}/{max_retries})...")
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"[ERROR] API request failed: {e}")
+            return None
+    print(f"[ERROR] Still rate limited after {max_retries} retries, giving up on this request.")
+    return None
 
 def create_kafka_producer():
     """Initialize Kafka producer with JSON serialization."""
@@ -47,28 +56,9 @@ def create_kafka_producer():
     return producer
 
 
-def run():
-    """One-shot execution for Airflow."""
-    # Try to create Kafka producer with a few retries
-    retries = 5
-    for attempt in range(1, retries + 1):
-        try:
-            producer = create_kafka_producer()
-            break
-        except NoBrokersAvailable:
-            print(f"[WARN] Kafka not ready (attempt {attempt}/{retries}), retrying in 5s...")
-            time.sleep(5)
-    else:
-        print("[ERROR] Kafka broker not available, exiting.")
-        return
-
-    # Load config
-    config = load_config('config.yaml')
-    data_cfg = config['data_config']
-    airport_icao = data_cfg['schedule_airport']
-    max_pages = data_cfg.get('max_pages', 1)
-
-    part_url = f'/airports/{airport_icao}/flights/departures'
+def collect_flights(producer, airport_icao, max_pages, direction, kafka_topic):
+    """Fetch paginated flight data for one direction (departures/arrivals) and send it to Kafka."""
+    part_url = f'/airports/{airport_icao}/flights/{direction}'
     print(f"✅ Collector started. Fetching from https://aeroapi.flightaware.com/aeroapi{part_url}")
 
     page = 1
@@ -78,11 +68,11 @@ def run():
             print("⚠️ No data fetched this run.")
             break
 
-        departures = data.get('departures') or data.get('scheduled_departures')
-        if departures:
-            for i, departure in enumerate(departures, start=1):
-                producer.send(KAFKA_TOPIC, value=departure)
-                print(f"📦 Sent message {i} on page {page} to Kafka topic '{KAFKA_TOPIC}'")
+        flights = data.get(direction) or data.get(f"scheduled_{direction}")
+        if flights:
+            for i, flight in enumerate(flights, start=1):
+                producer.send(kafka_topic, value=flight)
+                print(f"📦 Sent message {i} on page {page} to Kafka topic '{kafka_topic}'")
 
         # Prepare next page if available
         if 'links' in data and 'next' in data['links']:
@@ -96,7 +86,32 @@ def run():
         time.sleep(1)  # small delay between pages to avoid hitting rate limits
 
     producer.flush()
-    print(f"✅ All messages sent to Kafka topic '{KAFKA_TOPIC}'")
+    print(f"✅ All messages sent to Kafka topic '{kafka_topic}'")
+
+
+def run():
+    """One-shot execution for Airflow."""
+    # Try to create Kafka producer with a few retries
+    retries = 5
+    for attempt in range(1, retries + 1):
+        try:
+            producer = create_kafka_producer()
+            break
+        except MetadataEmptyBrokerList:
+            print(f"[WARN] Kafka not ready (attempt {attempt}/{retries}), retrying in 5s...")
+            time.sleep(5)
+    else:
+        print("[ERROR] Kafka broker not available, exiting.")
+        return
+
+    # Load config
+    config = load_config('config.yaml')
+    data_cfg = config['data_config']
+    airport_icao = data_cfg['schedule_airport']
+    max_pages = data_cfg.get('max_pages', 1)
+
+    collect_flights(producer, airport_icao, max_pages, "departures", DEPARTURE_KAFKA_TOPIC)
+    collect_flights(producer, airport_icao, max_pages, "arrivals", ARRIVAL_KAFKA_TOPIC)
 
 if __name__ == "__main__":
     run()

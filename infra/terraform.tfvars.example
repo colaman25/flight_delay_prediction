@@ -1,0 +1,19 @@
+# Copy this to terraform.tfvars (gitignored) and fill in real values.
+
+# Must be globally unique across all of AWS. Deliberately NOT the same
+# bucket your local Docker STORAGE_BACKEND=aws testing points at, so the
+# migration pipeline's data can never collide with local ad-hoc runs.
+data_bucket_name = "your-unique-bucket-name-here"
+
+aws_region  = "eu-west-2"
+environment = "aws-migration"
+
+# Upload the aws-msk-iam-auth jar (download from Maven Central:
+# software.amazon.msk:aws-msk-iam-auth) to your warehouse bucket first,
+# then point this at it. See infra/deploy_glue_scripts.sh.
+msk_iam_auth_jar_s3_path = "s3://your-unique-bucket-name-here/glue-jars/aws-msk-iam-auth-2.2.0-all.jar"
+
+# Used by the fetch-flight-data / fetch-schedule-data Lambdas.
+opensky_client_id     = "your-opensky-client-id"
+opensky_client_secret = "your-opensky-client-secret"
+flightaware_api_key   = "your-flightaware-api-key"

@@ -1,0 +1,6 @@
+# Pinned: an unpinned kafka-python already broke this project once this
+# session (NoBrokersAvailable was renamed to MetadataEmptyBrokerList
+# between major versions). 3.0.9 is the version already validated
+# elsewhere in this project.
+kafka-python==3.0.9
+aws-msk-iam-sasl-signer-python

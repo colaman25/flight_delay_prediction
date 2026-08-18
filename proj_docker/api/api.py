@@ -5,6 +5,8 @@ import math
 
 app = FastAPI(title="Flight Delay Prediction API")
 
+STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "aws").lower()
+
 WAREHOUSE_PATH = "s3://flight-delay-predictions/iceberg"
 TABLE_PATH = f"{WAREHOUSE_PATH}/data/prediction_data"
 
@@ -19,11 +21,20 @@ con.execute("INSTALL iceberg;")
 con.execute("LOAD iceberg;")
 
 # Configure S3 access
-con.execute(f"""
-SET s3_region='eu-west-2';
-SET s3_access_key_id='{os.getenv("AWS_ACCESS_KEY_ID")}';
-SET s3_secret_access_key='{os.getenv("AWS_SECRET_ACCESS_KEY")}';
-""")
+if STORAGE_BACKEND == "minio":
+    con.execute(f"""
+    SET s3_endpoint='minio:9000';
+    SET s3_access_key_id='{os.getenv("MINIO_ACCESS_KEY")}';
+    SET s3_secret_access_key='{os.getenv("MINIO_SECRET_KEY")}';
+    SET s3_url_style='path';
+    SET s3_use_ssl=false;
+    """)
+else:
+    con.execute(f"""
+    SET s3_region='eu-west-2';
+    SET s3_access_key_id='{os.getenv("AWS_ACCESS_KEY_ID")}';
+    SET s3_secret_access_key='{os.getenv("AWS_SECRET_ACCESS_KEY")}';
+    """)
 
 # ✅ Enable unsafe version guessing for Iceberg tables
 con.execute("SET unsafe_enable_version_guessing = true;")

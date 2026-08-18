@@ -1,49 +1,49 @@
-from pyspark.sql import SparkSession
+import sys
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
 from pyspark.sql.types import (
     StructType, StructField, StringType, BooleanType,
-    DoubleType, LongType, TimestampType, IntegerType
+    DoubleType, LongType, IntegerType
 )
 import pyspark.sql.functions as F
-import os
+from awsglue.context import GlueContext
+from awsglue.job import Job
 
-WAREHOUSE_PATH = "s3a://flight-delay-predictions/iceberg"
+# =========================================================
+# Glue job bootstrap
+# =========================================================
+# Iceberg/Glue-Catalog configuration (spark.sql.extensions,
+# spark.sql.catalog.local.*, --datalake-formats) is set via job
+# parameters in the Glue job definition (see infra/glue_jobs.tf),
+# not programmatically here — those settings must exist before
+# this SparkContext is created, which Glue does internally before
+# any of this script's code runs.
 
-STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "aws").lower()
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME',
+    'warehouse_path',
+    'kafka_bootstrap_servers',
+])
 
-spark_builder = (
-    SparkSession.builder
-    .appName("IcebergKafkaStreaming")
-    .master("local[*]")
-    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-    .config("spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog")
-    .config("spark.sql.catalog.local.type", "hadoop")
-    .config("spark.sql.catalog.local.warehouse", WAREHOUSE_PATH)
-    .config("spark.sql.defaultCatalog", "local")
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-)
-
-if STORAGE_BACKEND == "minio":
-    spark_builder = (
-        spark_builder
-        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
-        .config("spark.hadoop.fs.s3a.access.key", os.getenv("MINIO_ACCESS_KEY"))
-        .config("spark.hadoop.fs.s3a.secret.key", os.getenv("MINIO_SECRET_KEY"))
-        .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-    )
-else:
-    spark_builder = (
-        spark_builder
-        .config("spark.hadoop.fs.s3a.endpoint.region", os.getenv("AWS_DEFAULT_REGION", "eu-west-2"))
-        .config("spark.hadoop.fs.s3a.access.key", os.getenv("AWS_ACCESS_KEY_ID"))
-        .config("spark.hadoop.fs.s3a.secret.key", os.getenv("AWS_SECRET_ACCESS_KEY"))
-        .config("spark.hadoop.fs.s3a.path.style.access", "false")
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "true")
-    )
-
-spark = spark_builder.getOrCreate()
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
 
 spark.sparkContext.setLogLevel("WARN")
+
+WAREHOUSE_PATH = args['warehouse_path']
+KAFKA_BOOTSTRAP_SERVERS = args['kafka_bootstrap_servers']
+
+# MSK IAM auth — requires the aws-msk-iam-auth jar on the job's
+# classpath (added via --extra-jars in the Glue job definition).
+KAFKA_AUTH_OPTIONS = {
+    "kafka.security.protocol": "SASL_SSL",
+    "kafka.sasl.mechanism": "AWS_MSK_IAM",
+    "kafka.sasl.jaas.config": "software.amazon.msk.auth.iam.IAMLoginModule required;",
+    "kafka.sasl.client.callback.handler.class": "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
+}
 
 spark.sql("CREATE NAMESPACE IF NOT EXISTS local.flights")
 spark.sql("CREATE NAMESPACE IF NOT EXISTS local.schedule")
@@ -149,7 +149,8 @@ flight_schema = StructType([
 flight_kafka_df = (
     spark.readStream
     .format("kafka")
-    .option("kafka.bootstrap.servers", "kafka:9092")
+    .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
+    .options(**KAFKA_AUTH_OPTIONS)
     .option("subscribe", "flight-data")
     .option("startingOffsets", "earliest")
     .option("failOnDataLoss", "false")
@@ -167,17 +168,9 @@ flight_query = (
     flight_df.writeStream
     .format("iceberg")
     .outputMode("append")
-    .option("checkpointLocation", "s3a://flight-delay-predictions/checkpoints/flight_positions")
+    .option("checkpointLocation", f"{WAREHOUSE_PATH}/checkpoints/flight_positions")
     .toTable("local.flights.flight_positions")
 )
-
-# For Displaying, delete later
-flight_df.writeStream \
-    .format("console") \
-    .outputMode("append") \
-    .option("truncate", False) \
-    .start()
-
 
 # Schedule Data (shared schema for departures and arrivals)
 schedule_schema = StructType([
@@ -242,7 +235,8 @@ def parse_schedule_stream(kafka_df):
 departure_kafka_df = (
     spark.readStream
     .format("kafka")
-    .option("kafka.bootstrap.servers", "kafka:9092")
+    .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
+    .options(**KAFKA_AUTH_OPTIONS)
     .option("subscribe", "departure-schedule-data")
     .option("startingOffsets", "earliest")
     .option("failOnDataLoss", "false")
@@ -255,22 +249,16 @@ departure_query = (
     departure_df.writeStream
     .format("iceberg")
     .outputMode("append")
-    .option("checkpointLocation", "s3a://flight-delay-predictions/checkpoints/departure_schedule_data")
+    .option("checkpointLocation", f"{WAREHOUSE_PATH}/checkpoints/departure_schedule_data")
     .toTable("local.schedule.departure_schedule_data")
 )
-
-# For Displaying, delete later
-departure_df.writeStream \
-    .format("console") \
-    .outputMode("append") \
-    .option("truncate", False) \
-    .start()
 
 # Arrival Schedule Data
 arrival_kafka_df = (
     spark.readStream
     .format("kafka")
-    .option("kafka.bootstrap.servers", "kafka:9092")
+    .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
+    .options(**KAFKA_AUTH_OPTIONS)
     .option("subscribe", "arrival-schedule-data")
     .option("startingOffsets", "earliest")
     .option("failOnDataLoss", "false")
@@ -283,15 +271,12 @@ arrival_query = (
     arrival_df.writeStream
     .format("iceberg")
     .outputMode("append")
-    .option("checkpointLocation", "s3a://flight-delay-predictions/checkpoints/arrival_schedule_data")
+    .option("checkpointLocation", f"{WAREHOUSE_PATH}/checkpoints/arrival_schedule_data")
     .toTable("local.schedule.arrival_schedule_data")
 )
 
-# For Displaying, delete later
-arrival_df.writeStream \
-    .format("console") \
-    .outputMode("append") \
-    .option("truncate", False) \
-    .start()
-
 spark.streams.awaitAnyTermination()
+
+# Only reached if the streaming queries above terminate (error or
+# explicit stop) — this is a continuous streaming job, not a batch one.
+job.commit()

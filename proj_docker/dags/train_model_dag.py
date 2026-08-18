@@ -27,7 +27,9 @@ with DAG(
         auto_remove=True,
         network_mode=NETWORK,
         docker_url='unix://var/run/docker.sock',
+        do_xcom_push=False,
         environment={
+            "STORAGE_BACKEND": "{{ var.value.STORAGE_BACKEND }}",
             "MINIO_ACCESS_KEY": "{{ var.value.MINIO_ACCESS_KEY }}",
             "MINIO_SECRET_KEY": "{{ var.value.MINIO_SECRET_KEY }}",
             "AWS_ACCESS_KEY_ID": "{{ var.value.AWS_ACCESS_KEY_ID }}",

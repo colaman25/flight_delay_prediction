@@ -6,7 +6,9 @@ from pyspark.sql.functions import to_json, struct, col
 
 WAREHOUSE_PATH = "s3a://flight-delay-predictions/iceberg"
 
-spark = (
+STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "aws").lower()
+
+spark_builder = (
     SparkSession.builder
     .appName("IcebergKafkaStreaming")
     .master("local[*]")
@@ -15,19 +17,29 @@ spark = (
     .config("spark.sql.catalog.local.type", "hadoop")
     .config("spark.sql.catalog.local.warehouse", WAREHOUSE_PATH)
     .config("spark.sql.defaultCatalog", "local")
-    #.config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
-    .config("spark.hadoop.fs.s3a.endpoint.region", "eu-west-2")
-    .config("spark.hadoop.fs.s3a.access.key", os.getenv("MINIO_ACCESS_KEY"))
-    .config("spark.hadoop.fs.s3a.secret.key", os.getenv("MINIO_SECRET_KEY"))
-    .config("spark.hadoop.fs.s3a.access.key", os.getenv("AWS_ACCESS_KEY_ID"))
-    .config("spark.hadoop.fs.s3a.secret.key", os.getenv("AWS_SECRET_ACCESS_KEY"))
-    #.config("spark.hadoop.fs.s3a.path.style.access", "true")
-    .config("spark.hadoop.fs.s3a.path.style.access", "false")
     .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-    #.config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "true")
-    .getOrCreate()
 )
+
+if STORAGE_BACKEND == "minio":
+    spark_builder = (
+        spark_builder
+        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
+        .config("spark.hadoop.fs.s3a.access.key", os.getenv("MINIO_ACCESS_KEY"))
+        .config("spark.hadoop.fs.s3a.secret.key", os.getenv("MINIO_SECRET_KEY"))
+        .config("spark.hadoop.fs.s3a.path.style.access", "true")
+        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
+    )
+else:
+    spark_builder = (
+        spark_builder
+        .config("spark.hadoop.fs.s3a.endpoint.region", os.getenv("AWS_DEFAULT_REGION", "eu-west-2"))
+        .config("spark.hadoop.fs.s3a.access.key", os.getenv("AWS_ACCESS_KEY_ID"))
+        .config("spark.hadoop.fs.s3a.secret.key", os.getenv("AWS_SECRET_ACCESS_KEY"))
+        .config("spark.hadoop.fs.s3a.path.style.access", "false")
+        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "true")
+    )
+
+spark = spark_builder.getOrCreate()
 
 spark.sparkContext.setLogLevel("WARN")
 
